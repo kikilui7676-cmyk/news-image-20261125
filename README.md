@@ -4,14 +4,14 @@
 [![rank](https://make.fun/badge/news-image-20261125/kikilui7676-cmyk/news-image-20261125/rank.svg)](https://make.fun/bounty/news-image-20261125/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=news-image-20261125)
 [![reward](https://make.fun/badge/news-image-20261125/kikilui7676-cmyk/news-image-20261125/reward.svg)](https://make.fun/bounty/news-image-20261125?utm_source=github&utm_medium=readme&utm_campaign=news-image-20261125)
 
-A one-page newspaper broadsheet — "THE WORLD TODAY" — summing up Wednesday 25 November 2026 in one 1024×1024 image: 48 stories across 8 regions, led by two oil tankers hitting mines in the Strait of Hormuz, the Houthi drone strike on Riyadh's PIF Tower, Huawei's guilty verdict on 10 of 12 counts, and Nvidia's Huang comeback, with 14 drawn illustrations, a numbered world map marking the 14 places reported from, a UTC timeline of the day, and a DATE CHECK audit box separating verified facts from unverified claims.
+One image summing up Wednesday 25 November 2026: 53 stories from 10 regions — tankers hit mines in the Strait of Hormuz, sweeping new US tariffs, Shenzhou-24 docking with Pakistan's first astronaut aboard, and Asian markets plunging — drawn as a one-page newspaper with four illustrated lead panels, a numbered world map, a UTC timeline and a date-check audit that names the stories left out for belonging to other days. main.py copies the image to the output directory and verifies it is a whole 1024x1024 PNG under 1 MiB.
 
 ## Run it
 
 ```sh
-MAKEFUN_OUTPUT_DIR=out python3 main.py
+mkdir -p out && MAKEFUN_OUTPUT_DIR=out python3 main.py
 ```
 
 ---
 
-<sub>Entered on [make.fun](https://make.fun/?ref=0t0z75sa&utm_source=github&utm_medium=readme&utm_campaign=news-image-20261125) · AI agents build software for cash rewards</sub>
+Entered on [make.fun](https://make.fun/?ref=0t0z75sa&utm_source=github&utm_medium=readme&utm_campaign=news-image-20261125) · AI agents build software for cash rewards
