@@ -1,68 +1,119 @@
 #!/usr/bin/env python3
-"""news-image-20261125 v6 entrypoint.
+"""Emit the v7 front page for news-image-20261125.
 
-Copies the pre-rendered entry.png (1024x1024, built in-session) to
-$MAKEFUN_OUTPUT_DIR/entry.png, then verifies the copy: SHA-256 match,
-PNG signature, IHDR dimensions 1024x1024, and size <= 1 MiB.
-Standard library only. Deterministic: every run writes identical bytes.
+The image is rendered locally beforehand and shipped in this repo as
+entry.png (1024x1024, under 1 MiB). This entrypoint only copies it into
+the grader's output directory and proves the copy is exact.
+
+Stdlib only. No rendering, no fonts, no network, no clock: the two runs
+a grader performs must produce byte-identical output.
+
+Usage:
+    MAKEFUN_OUTPUT_DIR=<dir> python3 main.py
+Exit 0 on success; any gate failure exits non-zero with a message.
 """
 
 import hashlib
+import json
 import os
-import shutil
 import struct
 import sys
+import zlib
 
-EXPECTED_SHA256 = "a4e248a1cc314b27303293e840646aca1a8de9b28fd0511c8a92f7b8b10bfc24"
+SOURCE_NAME = "entry.png"
 MAX_BYTES = 1024 * 1024
-WIDTH = HEIGHT = 1024
-PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+MAX_EDGE = 1024
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
 def fail(message):
-    print(f"main.py: error: {message}", file=sys.stderr)
-    raise SystemExit(1)
+    print("main.py: FAIL: " + message, file=sys.stderr)
+    return 1
 
 
-def check_png(path):
-    if not os.path.isfile(path):
-        fail(f"{path}: file not found")
-    with open(path, "rb") as fh:
-        data = fh.read()
-    if len(data) > MAX_BYTES:
-        fail(f"{path}: {len(data)} bytes exceeds 1 MiB limit")
-    if data[:8] != PNG_SIGNATURE:
-        fail(f"{path}: bad PNG signature")
-    if data[12:16] != b"IHDR":
-        fail(f"{path}: first chunk is not IHDR")
-    width, height = struct.unpack(">II", data[16:24])
-    if (width, height) != (WIDTH, HEIGHT):
-        fail(f"{path}: dimensions {width}x{height}, expected 1024x1024")
-    bit_depth, color_type = data[24], data[25]
-    if bit_depth != 8 or color_type != 2:
-        fail(f"{path}: bit depth {bit_depth}, color type {color_type}; expected 8 / 2 (RGB)")
-    return data
+def read_png(path):
+    with open(path, "rb") as handle:
+        return handle.read()
+
+
+def check_png(blob):
+    """Verify signature, IHDR size and every chunk CRC. Returns (w, h)."""
+    if len(blob) < 8 or blob[:8] != PNG_MAGIC:
+        raise ValueError("not a PNG file (bad magic)")
+    if len(blob) > MAX_BYTES:
+        raise ValueError("PNG over 1 MiB: %d bytes" % len(blob))
+    offset = 8
+    width = height = None
+    seen_iend = False
+    seen_idat = False
+    first = True
+    while offset + 8 <= len(blob):
+        length, kind = struct.unpack(">I4s", blob[offset:offset + 8])
+        if first and kind != b"IHDR":
+            raise ValueError("first chunk is not IHDR")
+        first = False
+        start = offset + 8
+        end = start + length
+        if end + 4 > len(blob):
+            raise ValueError("truncated chunk %r" % kind)
+        stored_crc, = struct.unpack(">I", blob[end:end + 4])
+        actual_crc = zlib.crc32(kind + blob[start:end]) & 0xFFFFFFFF
+        if stored_crc != actual_crc:
+            raise ValueError("CRC mismatch in chunk %r" % kind)
+        if kind == b"IHDR":
+            width, height = struct.unpack(">II", blob[start:start + 8])
+            if width > MAX_EDGE or height > MAX_EDGE:
+                raise ValueError("image too large: %dx%d" % (width, height))
+        if kind == b"IDAT":
+            seen_idat = True
+        if kind == b"IEND":
+            seen_iend = True
+            break
+        offset = end + 4
+    if width is None:
+        raise ValueError("no IHDR chunk")
+    if not seen_idat:
+        raise ValueError("no IDAT chunk (no image data)")
+    if not seen_iend:
+        raise ValueError("no IEND chunk")
+    return width, height
 
 
 def main():
-    here = os.path.dirname(os.path.abspath(__file__))
-    source = os.path.join(here, "entry.png")
     out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR")
     if not out_dir:
-        fail("MAKEFUN_OUTPUT_DIR is not set")
-    data = check_png(source)
-    digest = hashlib.sha256(data).hexdigest()
-    if digest != EXPECTED_SHA256:
-        fail(f"entry.png sha256 mismatch: {digest}")
+        return fail("MAKEFUN_OUTPUT_DIR is not set")
+    here = os.path.dirname(os.path.abspath(__file__))
+    source = os.path.join(here, SOURCE_NAME)
+    if not os.path.isfile(source):
+        return fail("missing " + source)
+    try:
+        blob = read_png(source)
+        width, height = check_png(blob)
+    except (OSError, ValueError) as exc:
+        return fail(str(exc))
+    digest = hashlib.sha256(blob).hexdigest()
     os.makedirs(out_dir, exist_ok=True)
-    dest = os.path.join(out_dir, "entry.png")
-    shutil.copyfile(source, dest)
-    copied = check_png(dest)
-    if hashlib.sha256(copied).hexdigest() != EXPECTED_SHA256:
-        fail("copied entry.png sha256 mismatch")
-    print(f"entry.png: 1024x1024, {len(data)} bytes, sha256 {digest}")
-    print(f"wrote {dest}")
+    target = os.path.join(out_dir, SOURCE_NAME)
+    with open(target, "wb") as handle:
+        handle.write(blob)
+    with open(target, "rb") as handle:
+        written = handle.read()
+    if hashlib.sha256(written).hexdigest() != digest:
+        return fail("written copy hash differs from source")
+    if len(written) != len(blob):
+        return fail("written copy size differs from source")
+    report = {
+        "entry": SOURCE_NAME,
+        "width": width,
+        "height": height,
+        "bytes": len(blob),
+        "sha256": digest,
+        "output": target,
+    }
+    print(json.dumps(report, sort_keys=True))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
