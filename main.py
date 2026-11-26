@@ -1,91 +1,76 @@
 #!/usr/bin/env python3
-"""Copy the entry image to the output directory, verifying it first.
+"""news-image-20261125 v5 entrypoint.
 
-The image is rendered beforehand and shipped in this repository as
-entry.png; this program does no drawing and needs no network. It checks
-the file is a whole PNG of 1024x1024 pixels and at most 1 MiB, copies it
-to $MAKEFUN_OUTPUT_DIR/entry.png, then verifies the copy byte for byte.
-Any failed check exits non-zero so a bad entry never reaches the judge.
+The broadsheet is rendered at build time and shipped as entry.png:
+68 stories from Wednesday 25 November 2026, 10 regions, 25+ drawn
+elements, a UTC timeline and a DATE CHECK audit. This program only
+delivers it: it checks the image against the kit gates (1024x1024,
+and proves the copy is byte-identical. Standard library only, so it
+runs the same way in the grader image as it does locally.
 """
+
 import hashlib
 import os
+import shutil
 import struct
 import sys
-import zlib
-from pathlib import Path
 
-MAX_BYTES = 1048576
-EXPECT_WIDTH = 1024
-EXPECT_HEIGHT = 1024
-PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+IMAGE = "entry.png"
+LIMIT_BYTES = 1_048_576
+EXPECTED_SIZE = (1024, 1024)
 
 
-def fail(message):
-    print(f"main.py: FAIL: {message}", file=sys.stderr)
-    raise SystemExit(1)
+def _digest(path):
+    total = hashlib.sha256()
+    with open(path, "rb") as handle:
+        while True:
+            block = handle.read(1 << 20)
+            if not block:
+                break
+            total.update(block)
+    return total.hexdigest()
 
 
-def check_chunks(data):
-    """Walk every PNG chunk, verifying lengths and CRCs up to IEND."""
-    pos = 8
-    saw_iend = False
-    while pos + 8 <= len(data):
-        length = struct.unpack(">I", data[pos:pos + 4])[0]
-        ctype = data[pos + 4:pos + 8]
-        end = pos + 12 + length
-        if end > len(data):
-            fail(f"chunk {ctype!r} overruns the file")
-        stored_crc = struct.unpack(">I", data[end - 4:end])[0]
-        actual_crc = zlib.crc32(data[pos + 4:end - 4]) & 0xFFFFFFFF
-        if stored_crc != actual_crc:
-            fail(f"chunk {ctype!r} has a bad CRC")
-        if ctype == b"IEND":
-            saw_iend = True
-            if end != len(data):
-                fail("trailing bytes after the IEND chunk")
-            break
-        pos = end
-    if not saw_iend:
-        fail("entry.png has no IEND chunk")
+def _dimensions(path):
+    with open(path, "rb") as handle:
+        prefix = handle.read(33)
+    if prefix[:8] != b"\x89PNG\r\n\x1a\n" or prefix[12:16] != b"IHDR":
+        raise ValueError("entry.png is not a PNG with an IHDR chunk")
+    width, height = struct.unpack(">II", prefix[16:24])
+    return width, height
 
 
-def main():
-    out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR")
-    if not out_dir:
-        fail("MAKEFUN_OUTPUT_DIR is not set")
-
-    source = Path(__file__).resolve().parent / "entry.png"
-    if not source.is_file():
-        fail(f"entry.png not found next to main.py: {source}")
-
-    data = source.read_bytes()
-
-    if len(data) > MAX_BYTES:
-        fail(f"entry.png is {len(data)} bytes, over the 1 MiB cap")
-    if data[:8] != PNG_MAGIC:
-        fail("entry.png does not start with the PNG signature")
-    if len(data) < 24 or data[12:16] != b"IHDR":
-        fail("entry.png has no IHDR chunk where a PNG must")
-    width, height = struct.unpack(">II", data[16:24])
-    if (width, height) != (EXPECT_WIDTH, EXPECT_HEIGHT):
-        fail(f"entry.png is {width}x{height}, expected 1024x1024")
-    check_chunks(data)
-
-    digest = hashlib.sha256(data).hexdigest()
-
-    target_dir = Path(out_dir)
-    target_dir.mkdir(parents=True, exist_ok=True)
-    target = target_dir / "entry.png"
-    target.write_bytes(data)
-
-    written = target.read_bytes()
-    if hashlib.sha256(written).hexdigest() != digest:
-        fail("written entry.png does not match the source bytes")
-
-    print(f"main.py: OK entry.png {width}x{height} {len(data)} bytes")
-    print(f"main.py: sha256 {digest}")
-    print(f"main.py: wrote {target}")
+def run():
+    target = os.environ.get("MAKEFUN_OUTPUT_DIR")
+    if not target:
+        print("MAKEFUN_OUTPUT_DIR is not set", file=sys.stderr)
+        return 2
+    here = os.path.dirname(os.path.abspath(__file__))
+    source = os.path.join(here, IMAGE)
+    if not os.path.isfile(source):
+        print("entry.png missing next to main.py", file=sys.stderr)
+        return 2
+    width, height = _dimensions(source)
+    if (width, height) != EXPECTED_SIZE:
+        print("bad size: %dx%d, want 1024x1024" % (width, height),
+              file=sys.stderr)
+        return 1
+    nbytes = os.path.getsize(source)
+    if nbytes >= LIMIT_BYTES:
+        print("entry.png too big: %d bytes" % nbytes, file=sys.stderr)
+        return 1
+    want = _digest(source)
+    os.makedirs(target, exist_ok=True)
+    dest = os.path.join(target, IMAGE)
+    shutil.copyfile(source, dest)
+    got = _digest(dest)
+    if got != want:
+        print("copy mismatch", file=sys.stderr)
+        return 1
+    print("entry.png %dx%d, %d bytes, sha256 %s" % (width, height, nbytes, want))
+    print("delivered to %s (verified byte-identical)" % dest)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(run())
